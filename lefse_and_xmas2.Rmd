@@ -1,0 +1,627 @@
+---
+title: "Comparing outputs from XMAS2, lefse-conda, and lefse-galaxy using the same in-house datasets (amplicon_ps|Zeybel_Gut)"
+date: "Created: 2022-07-18; Updated: `r Sys.Date()`"
+author:
+  - name: "Hua Zou"
+    email: "zouhua@xbiome.com"
+output:
+    html_document: 
+        toc: true
+---
+
+# Introduction
+
+In this document, Comparing the output from lefse through different applications:
+
++ XMAS2 (R package)
++ lefse-conda (command line)
++ lefse-galaxy (from the galaxy platfrom)
+
+In all cases, using the same dataset, amplicon_ps and Zeybel_Gut, which are included in the XMAS package.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(XMAS2)
+library(dplyr)
+library(ggplot2)
+library(devtools)
+library(tibble)
+library(tidyr)
+library(magrittr)
+library(readr)
+library(VennDiagram)
+library(purrr)
+
+# rm(list = ls())
+options(stringsAsFactors = F)
+options(future.globals.maxSize = 1000 * 1024^2)
+```
+
+
+# Dataset
+
+## 16s genus 
+```{r}
+data("amplicon_ps")
+amplicon_ps_genus <- summarize_taxa(amplicon_ps, taxa_level = "Genus")
+amplicon_ps_genus
+```
+
+## metagenomics species 
+```{r}
+data("Zeybel_Gut")
+Zeybel_ps_species <- summarize_taxa(Zeybel_Gut, taxa_level = "Species")
+Zeybel_ps_species
+```
+
+## Preparing for lefse galaxy and conda
+
+* 1st row: class (required)
+
+* 2nd row: subclass (optional)
+
+* 3rd row: sampleID (required)
+
+* rownames: taxon
+
+* data format: splitted by "\t"
+```{r}
+prepare_lefse <- function(ps,
+                          Class,
+                          Class_names,
+                          Subclass = NULL,
+                          cutoff = 10) {
+    
+    # ps = amplicon_ps_genus
+    # Class = "SampleType"
+    # Class_names = c("gut", "tongue")
+    # Subclass = NULL
+    # cutoff = 10
+    
+    sam_tab <- phyloseq::sample_data(ps) %>%
+        data.frame()
+    colnames(sam_tab)[which(colnames(sam_tab) == Class)] <- "CompClass"
+    
+    if (is.null(Subclass)) {
+        sam_tab_final <- sam_tab %>%
+            dplyr::select(CompClass) %>%
+            tibble::rownames_to_column("TempRowNames") %>%
+            dplyr::filter(CompClass %in% Class_names) %>%
+            dplyr::select(all_of(c("TempRowNames", "CompClass"))) %>%
+            tibble::column_to_rownames("TempRowNames")
+    } else {
+        sam_tab_final <- sam_tab %>%
+            dplyr::select(all_of(c("CompClass", Subclass))) %>%
+            tibble::rownames_to_column("TempRowNames") %>%
+            dplyr::filter(CompClass %in% Class_names) %>%
+            dplyr::select(all_of(c("TempRowNames", "CompClass", Subclass))) %>%
+            tibble::column_to_rownames("TempRowNames")
+    }
+    
+    colnames(sam_tab_final)[which(colnames(sam_tab_final) == "CompClass")] <- Class
+    
+    phyloseq::sample_data(ps) <- phyloseq::sample_data(sam_tab_final)
+    otu_tab <- phyloseq::otu_table(ps) %>%
+        data.frame()
+    otu_tab_final <- otu_tab[rowSums(otu_tab) > cutoff, colSums(otu_tab) > cutoff, F]
+    phyloseq::otu_table(ps) <- phyloseq::otu_table(as.matrix(otu_tab_final), taxa_are_rows = TRUE)
+    
+    lefse_data <- sam_tab_final %>% 
+        tibble::rownames_to_column("Sample") %>%
+        dplyr::inner_join(otu_tab_final %>% 
+                              t() %>% data.frame() %>%
+                              tibble::rownames_to_column("Sample"),
+                          by = "Sample") %>%
+        dplyr::select(all_of(Class), Sample, all_of(Subclass), everything()) %>%
+        #stats::setNames(c(Class, "Sample", Subclass, rownames(otu_tab_final))) %>%
+        t() %>% data.frame()
+    
+    lefse_data_nosub <- sam_tab_final %>% 
+        tibble::rownames_to_column("Sample") %>%
+        dplyr::inner_join(otu_tab_final %>% 
+                              t() %>% data.frame() %>%
+                              tibble::rownames_to_column("Sample"),
+                          by = "Sample") %>%
+        dplyr::select(-Sample) %>%
+        dplyr::select(all_of(Class), all_of(Subclass), everything()) %>%
+        t() %>% data.frame()
+    
+    res <- list(ps=ps,
+                lefse=lefse_data,
+                lefse_nosub=lefse_data_nosub)
+    
+    return(res)
+}
+
+amplicon_ps_genus_lefse <- prepare_lefse(
+                          ps = amplicon_ps_genus,
+                          Class = "SampleType",
+                          Class_names = c("gut", "tongue"),
+                          cutoff = 10)
+
+write.table(amplicon_ps_genus_lefse$lefse, "amplicon_ps_genus_lefse.tsv", quote = F, sep = "\t", col.names = F)
+write.table(amplicon_ps_genus_lefse$lefse_nosub, "amplicon_ps_genus_lefse_nosub.tsv", quote = F, sep = "\t", col.names = F)
+
+Zeybel_ps_species_lefse <- prepare_lefse(
+                          ps = Zeybel_ps_species,
+                          Class = "LiverFatClass",
+                          Class_names = c("Mild", "Moderate"),
+                          cutoff = 1e-4)
+
+write.table(Zeybel_ps_species_lefse$lefse, "Zeybel_ps_species_lefse.tsv", quote = F, sep = "\t", col.names = F)
+write.table(Zeybel_ps_species_lefse$lefse_nosub, "Zeybel_ps_species_lefse_nosub.tsv", quote = F, sep = "\t", col.names = F)
+```
+
+
+# Run lefse independently with the three applications (R, conda, galaxy)
+
+## Running lefse in R (XMAS2)
+
+Perform the analysis with the `run_lefse2` function:
+
+* amplicon_ps_genus
+```{r}
+# run_lefse
+amplicon_xmas2_output <- run_lefse(
+                          ps = amplicon_ps_genus_lefse$ps,
+                          group = "SampleType",
+                          group_names = c("gut", "tongue"),
+                          norm = "CPM") %>% 
+    dplyr::mutate(app_name = "xmas_lefse") %>% 
+    dplyr::arrange(LDA_Score)
+head(amplicon_xmas2_output)
+
+
+# run_lefse2
+amplicon_xmas2_output2 <- run_lefse2(
+                          ps = amplicon_ps_genus_lefse$ps,
+                          group = "SampleType",
+                          group_names = c("gut", "tongue"),
+                          norm = "CPM") %>% 
+    dplyr::mutate(app_name = "xmas_lefse2") %>% 
+    dplyr::arrange(LDA_Score)
+head(amplicon_xmas2_output2)
+```
+
+* Zeybel_ps_species
+```{r}
+# run_lefse
+MGS_xmas2_output <- run_lefse(
+                          ps = Zeybel_ps_species_lefse$ps,
+                          group = "LiverFatClass",
+                          group_names = c("Mild", "Moderate"),
+                          norm = "CPM") %>% 
+    dplyr::mutate(app_name = "xmas_lefse") %>% 
+    dplyr::arrange(LDA_Score)
+head(MGS_xmas2_output)
+
+
+# run_lefse2
+MGS_xmas2_output2 <- run_lefse2(
+                          ps = Zeybel_ps_species_lefse$ps,
+                          group = "LiverFatClass",
+                          group_names = c("Mild", "Moderate"),
+                          norm = "CPM") %>% 
+    dplyr::mutate(app_name = "xmas_lefse2") %>% 
+    dplyr::arrange(LDA_Score)
+head(MGS_xmas2_output2)
+```
+
+
+## Running lefse-conda (command line) 
+
+### lefse-conda installation and version
+
+Note: I installed lefse following the instructions from [this site](https://github.com/biobakery/conda-biobakery)
+after installing conda.
+
+```bash
+## Add channels
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda config --add channels biobakery
+
+## Install lefse
+conda create -n lefse -c biobakery lefse -y
+```
+
+Conda and lefse versions:
+
+```bash
+conda --version
+#> conda 4.12.0
+
+conda list | grep -e "lefse"
+# packages in environment at /home/samuel/miniconda3/envs/lefse:
+#> lefse                     1.1.2              pyhdfd78af_0    bioconda
+```
+
+### Run lefse-conda
+
+1. Generate a tabular dataset (amplicon_ps_genus_lefse or Zeybel_ps_species_lefse) compatible with lefse-conda and
+lefse-galaxy using the `get_dataset.R` script.
+
+2. Run the script `run_lefse.sh` (linux) with the following parameters:
+
+```bash
+# In general
+# ./run_lefse.sh <path/to/conda/activate> <env_name> <path/to/Rscript> <filename prefix>
+
+# in my case (Hua Zou)
+
+## amplicon_ps_genus_lefse 
+./run_lefse.sh /Users/zouhua/opt/anaconda3/bin/activate lefse /usr/local/bin/R amplicon_ps_genus_lefse
+
+## Zeybel_ps_species_lefse 
+./run_lefse.sh /Users/zouhua/opt/anaconda3/bin/activate lefse /usr/local/bin/R Zeybel_ps_species_lefse
+```
+
+Note: All script files, `get_dataset.R` and `run_lefse.sh`, and this rmarkdown
+document must be in the same directory.
+
+### Import output from lefse-conda into R
+```{r}
+get_lefse_python <- function(datres, 
+                            Class_names,
+                            name = "lefse_conda",
+                            LDA_names = "lefse_conda_LDA",
+                            LDA_cutoff = 2) {
+    
+    # datres = "amplicon_ps_genus_lefse.res"
+    # Class_names = c("gut", "tongue")
+    # LDA_cutoff = 2
+    
+    col_names <- c(
+        "TaxaID", "log_hi_class_avg", "Enrichment", "lefse_conda_LDA", "pval")
+    lefse_conda <- readr::read_tsv(datres, show_col_types = FALSE, col_names = FALSE ) %>% 
+        magrittr::set_colnames(col_names) %>% 
+        dplyr::filter(!is.na(lefse_conda_LDA)) %>%
+        dplyr::mutate(
+            lefse_conda_LDA = ifelse(
+                Enrichment == Class_names[1], -lefse_conda_LDA, lefse_conda_LDA),
+            app_name = name) %>% 
+        dplyr::filter(abs(lefse_conda_LDA) >= LDA_cutoff) %>%
+        dplyr::arrange(lefse_conda_LDA)
+    
+    colnames(lefse_conda)[which(colnames(lefse_conda) == "lefse_conda_LDA")] <- LDA_names
+    
+    return(lefse_conda)
+}
+
+amplicon_ps_genus_lefse_conda <- get_lefse_python(
+                    datres = "amplicon_ps_genus_lefse.res", 
+                    Class_names = c("gut", "tongue"),
+                    LDA_names = "lefse_conda_LDA")
+head(amplicon_ps_genus_lefse_conda)
+
+Zeybel_ps_species_lefse_conda <- get_lefse_python(
+                    datres = "Zeybel_ps_species_lefse.res", 
+                    Class_names = c("Mild", "Moderate"),
+                    LDA_names = "lefse_conda_LDA")
+head(Zeybel_ps_species_lefse_conda)
+```
+
+## Running lefse from galaxy
+
+Using the `amplicon_ps_genus_lefse_nosub.txt` or `Zeybel_ps_species_lefse_nosub.txt` file (no subjects included) as input for lefse from the galaxy platform of the Huttenhower lab at [galaxy](https://huttenhower.sph.harvard.edu/galaxy/).
+
+
+
+The conditions as follow:
+
+* alpha were 0.05 for both KW and Wilcox, 
+
+* 2.0 for LDA. 
+
+* TSS normalization was applied as well.
+
+converting the output into compared format:
+
+* amplicon_ps_genus_lefse_nosub.res
+
+* Zeybel_ps_species_lefse_nosub.res
+```{r}
+amplicon_ps_genus_lefse_galaxy <- get_lefse_python(
+                        datres = "amplicon_ps_genus_lefse_nosub.res",
+                        name = "lefse_galaxy",
+                        Class_names = c("gut", "tongue"),
+                        LDA_names = "lefse_galaxy_LDA")
+head(amplicon_ps_genus_lefse_galaxy)
+
+Zeybel_ps_species_lefse_galaxy <- get_lefse_python(
+                        datres = "Zeybel_ps_species_lefse_nosub.res",
+                        name = "lefse_galaxy",
+                        Class_names = c("Mild", "Moderate"),
+                        LDA_names = "lefse_galaxy_LDA")
+head(amplicon_ps_genus_lefse_galaxy)
+```
+
+## Extracting results from XMAS2 results 
+
+* run_lefse (lefser R package)
+
+* run_lefse2 (microbiomeMarker R package)
+```{r}
+get_lefse_R <- function(datres,
+                        name = "Rrun_lefse",
+                        LDA_names = "lefse_R_LDA",
+                        LDA_cutoff = 2) {
+    
+    # datres = amplicon_xmas2_output
+    # name = "Rrun_lefse"
+    # LDA_cutoff = 2
+    
+    col_names <- c(
+        "TaxaID", "Block", "Enrichment", "LDA_Score", "EffectSize")
+    lefse_R <- datres %>% 
+        dplyr::select(all_of(col_names)) %>% 
+        dplyr::mutate(app_name = name) %>% 
+        dplyr::filter(abs(LDA_Score) >= LDA_cutoff) %>%
+        dplyr::arrange(LDA_Score)
+    
+    colnames(lefse_R)[which(colnames(lefse_R) == "LDA_Score")] <- LDA_names
+    
+    return(lefse_R)
+}
+
+amplicon_ps_genus_lefse_R <- get_lefse_R(
+                        datres = amplicon_xmas2_output, 
+                        name = "Rrun_lefse",
+                        LDA_names = "lefse_R_LDA")
+head(amplicon_ps_genus_lefse_R)
+
+amplicon_ps_genus_lefse_R2 <- get_lefse_R(
+                        datres = amplicon_xmas2_output2, 
+                        name = "Rrun_lefse2",
+                        LDA_names = "lefse_R2_LDA")
+head(amplicon_ps_genus_lefse_R2)
+
+
+Zeybel_ps_species_lefse_R <- get_lefse_R(
+                        datres = MGS_xmas2_output, 
+                        name = "Rrun_lefse",
+                        LDA_names = "lefse_R_LDA")
+head(Zeybel_ps_species_lefse_R)
+
+Zeybel_ps_species_lefse_R2 <- get_lefse_R(
+                        datres = MGS_xmas2_output2, 
+                        name = "Rrun_lefse2",
+                        LDA_names = "lefse_R2_LDA")
+head(Zeybel_ps_species_lefse_R2)
+```
+
+
+
+# Comparison of lefse-conda with XMAS2
+
+## Number of features reported as significant
+
+* amplicon_ps_genus_lefse
+```{r}
+plot_signif_taxa_num <- function(dat1, dat2, dat3, dat4) {
+
+    # dat1 = amplicon_ps_genus_lefse_conda
+    # dat2 = amplicon_ps_genus_lefse_galaxy
+    # dat3 = amplicon_ps_genus_lefse_R
+    # dat4 = amplicon_ps_genus_lefse_R2
+                     
+    combined_outputs <- dplyr::bind_rows(dat1, dat2, dat3, dat4) %>% 
+       dplyr::mutate(LDA = coalesce(lefse_conda_LDA, 
+                                    lefse_galaxy_LDA, 
+                                    lefse_R_LDA, 
+                                    lefse_R2_LDA))
+    
+    pl <- combined_outputs %>% 
+        count(app_name) %>% 
+        ggplot(aes(app_name, n)) +
+        geom_col() +
+        geom_label(aes(label = n)) +
+        ggtitle('Number of significiant features identified by the different applications using lefse') 
+    
+    return(pl)
+}
+
+plot_signif_taxa_num(dat1 = amplicon_ps_genus_lefse_conda, 
+                     dat2 = amplicon_ps_genus_lefse_galaxy, 
+                     dat3 = amplicon_ps_genus_lefse_R, 
+                     dat4 = amplicon_ps_genus_lefse_R2)
+```
+
+* Zeybel_ps_species_lefse
+```{r}
+plot_signif_taxa_num(dat1 = Zeybel_ps_species_lefse_conda, 
+                     dat2 = Zeybel_ps_species_lefse_galaxy, 
+                     dat3 = Zeybel_ps_species_lefse_R, 
+                     dat4 = Zeybel_ps_species_lefse_R2)
+```
+
+
+## Overlap of features reported as significant
+
+* amplicon_ps_genus_lefse
+```{r}
+plot_signif_taxa_venn <- function(dat1, dat2, dat3, dat4) {
+    
+    # dat1 = amplicon_ps_genus_lefse_conda
+    # dat2 = amplicon_ps_genus_lefse_galaxy
+    # dat3 = amplicon_ps_genus_lefse_R
+    # dat4 = amplicon_ps_genus_lefse_R2
+    
+    set1 = dat1$TaxaID
+    set2 = dat2$TaxaID
+    set3 = dat3$TaxaID
+    set4 = dat4$TaxaID
+    
+    grid.newpage()
+    venn_object <- venn.diagram(
+        x = list(set1, set2, set3, set4),
+        category.names = c("lefse-conda", "lefse-galaxy", 
+                           "run_lefse(lefser)", "run_lefse2(microbiomeMarker)"),
+        filename = NULL
+    )
+    grid.draw(venn_object)    
+}
+
+plot_signif_taxa_venn(dat1 = amplicon_ps_genus_lefse_conda, 
+                      dat2 = amplicon_ps_genus_lefse_galaxy, 
+                      dat3 = amplicon_ps_genus_lefse_R, 
+                      dat4 = amplicon_ps_genus_lefse_R2)
+```
+
+* Zeybel_ps_species_lefse
+```{r}
+plot_signif_taxa_venn(dat1 = Zeybel_ps_species_lefse_conda, 
+                      dat2 = Zeybel_ps_species_lefse_galaxy, 
+                      dat3 = Zeybel_ps_species_lefse_R, 
+                      dat4 = Zeybel_ps_species_lefse_R2)
+```
+
+## LDA scores' comparison
+
+LDA scores of the 14 overlapping features are similar.
+
+* amplicon_ps_genus_lefse
+```{r}
+amplicon_joint_output <- purrr::reduce(
+    .x = list(amplicon_ps_genus_lefse_conda, amplicon_ps_genus_lefse_galaxy, 
+              amplicon_ps_genus_lefse_R, amplicon_ps_genus_lefse_R2),
+    .f = ~ inner_join(.x, .y, by = "TaxaID")) %>% 
+    dplyr::select(TaxaID, lefse_conda_LDA, lefse_galaxy_LDA, 
+                  lefse_R_LDA, lefse_R2_LDA)
+amplicon_joint_output
+```
+
+* Zeybel_ps_species_lefse
+```{r}
+MGS_joint_output <- purrr::reduce(
+    .x = list(Zeybel_ps_species_lefse_conda, Zeybel_ps_species_lefse_galaxy, 
+              Zeybel_ps_species_lefse_R, Zeybel_ps_species_lefse_R2),
+    .f = ~ inner_join(.x, .y, by = "TaxaID")) %>% 
+    dplyr::select(TaxaID, lefse_conda_LDA, lefse_galaxy_LDA, 
+                  lefse_R_LDA, lefse_R2_LDA)
+MGS_joint_output
+```
+
+
+### XMAS2 LDA scores vs lefse-conda LDA scores
+
+#### amplicon_ps_genus_lefse
+
+* run_lefse (lefser R package) vs lefse-conda
+```{r}
+amplicon_joint_output %>% 
+    ggplot(aes(lefse_conda_LDA, lefse_R_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-conda and run_lefse")
+```
+
+* run_lefse2 (microbiomeMarker R package) vs lefse-conda
+```{r}
+amplicon_joint_output %>% 
+    ggplot(aes(lefse_conda_LDA, lefse_R2_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-conda and run_lefse2")
+```
+
+
+#### Zeybel_ps_species_lefse
+
+* run_lefse (lefser R package) vs lefse-conda
+```{r}
+MGS_joint_output %>% 
+    ggplot(aes(lefse_conda_LDA, lefse_R_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-conda and run_lefse")
+```
+
+* run_lefse2 (microbiomeMarker R package) vs lefse-conda
+```{r}
+MGS_joint_output %>% 
+    ggplot(aes(lefse_conda_LDA, lefse_R2_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-conda and run_lefse2")
+```
+
+### XMAS2 LDA scores vs lefse-galaxy LDA scores
+
+#### amplicon_ps_genus_lefse
+
+* run_lefse (lefser R package) vs lefse-galaxy
+```{r}
+amplicon_joint_output %>% 
+    ggplot(aes(lefse_galaxy_LDA, lefse_R_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-galaxy and run_lefse")
+```
+
+* run_lefse2 (microbiomeMarker R package) vs lefse-galaxy
+```{r}
+amplicon_joint_output %>% 
+    ggplot(aes(lefse_galaxy_LDA, lefse_R2_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-galaxy and run_lefse2")
+```
+
+#### Zeybel_ps_species_lefse
+
+* run_lefse (lefser R package) vs lefse-galaxy
+```{r}
+MGS_joint_output %>% 
+    ggplot(aes(lefse_galaxy_LDA, lefse_R_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-galaxy and run_lefse")
+```
+
+* run_lefse2 (microbiomeMarker R package) vs lefse-galaxy
+```{r}
+MGS_joint_output %>% 
+    ggplot(aes(lefse_galaxy_LDA, lefse_R2_LDA)) + 
+    geom_point(size = 3, shape = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    ggtitle("Comparison of LDA scores of features reported as significant 
+    by both lefse-galaxy and run_lefse2")
+```
+
+*Results:**
+
+* The overlap between `run_lefse2` (microbiomeMarker R package) and lefse-conda or lefse-galaxy have the similar LDA scores. However, the overlap between `run_lefse` (lefser R package) and lefse-conda or lefse-galaxy seem have slightly consistent LDA scores.
+
+
+### Differences bewteen XMAS2 LDA scores and lefse-conda
+```{r}
+setdiff(amplicon_ps_genus_lefse_conda$TaxaID, amplicon_ps_genus_lefse_R$TaxaID)
+```
+
+```{r}
+setdiff(amplicon_ps_genus_lefse_conda$TaxaID, amplicon_ps_genus_lefse_R2$TaxaID)
+```
+
+# Session info
+```{r}
+devtools::session_info()
+```
+
