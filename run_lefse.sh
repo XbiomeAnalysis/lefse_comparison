@@ -3,7 +3,7 @@
 if [[ "$#" == 0 ]]
 then
     echo 
-    echo Usage: $0 path/to/conda/bin/activate envrionemnt_name path/to/Rscript
+    echo Usage: $0 path/to/conda/bin/activate envrionemnt_name path/to/Rscript file_prefix
     echo
     exit
 fi
@@ -11,8 +11,6 @@ fi
 
 # Activate conda environment with lefse installed
 source $1 $2
-
-# fname='zeller14'
 
 fname=$4
 
