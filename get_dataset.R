@@ -1,15 +1,14 @@
-
-if (!'BiocManager' %in% installed.packages()[,'Package']) {
-    install.packages('BiocManager')
+if (!"BiocManager" %in% installed.packages()[, "Package"]) {
+    install.packages("BiocManager")
 }
     
 
 packages <- c(
-    'dplyr', 'tibble'
+    "dplyr", "tibble", "magrittr"
 )
 
 for (pkg in packages) {
-    if (!pkg %in% installed.packages()[,'Package'])
+    if (!pkg %in% installed.packages()[, "Package"])
         BiocManager::install(pkg)
 }
 
