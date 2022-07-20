@@ -41,4 +41,5 @@ vignettes/*.pdf
 #others file and folder
 .DS_Store
 /__MACOSX
+*.log
 

@@ -1,9 +1,0 @@
-INFO [2022-07-20 09:45:14] $x
-INFO [2022-07-20 09:45:14] list(set1, set2, set3, set4)
-INFO [2022-07-20 09:45:14] 
-INFO [2022-07-20 09:45:14] $category.names
-INFO [2022-07-20 09:45:14] c("lefse-conda", "lefse-galaxy", "run_lefse(lefser)", "run_lefse2(microbiomeMarker)")
-INFO [2022-07-20 09:45:14] 
-INFO [2022-07-20 09:45:14] $filename
-INFO [2022-07-20 09:45:14] NULL
-INFO [2022-07-20 09:45:14] 
