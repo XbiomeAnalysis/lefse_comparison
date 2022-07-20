@@ -606,9 +606,9 @@ MGS_joint_output %>%
     by both lefse-galaxy and run_lefse2")
 ```
 
-*Results:**
+**Results:**
 
-* The overlap between `run_lefse2` (microbiomeMarker R package) and lefse-conda or lefse-galaxy have the similar LDA scores. However, the overlap between `run_lefse` (lefser R package) and lefse-conda or lefse-galaxy seem have slightly consistent LDA scores.
+* The overlap between `run_lefse2` (microbiomeMarker R package) and lefse-conda or lefse-galaxy have the similar LDA scores. However, the overlap between `run_lefse` (lefser R package) and lefse-conda or lefse-galaxy seem have slightly different LDA scores.
 
 
 ### Differences bewteen XMAS2 LDA scores and lefse-conda
