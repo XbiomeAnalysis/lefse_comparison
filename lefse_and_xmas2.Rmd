@@ -414,7 +414,7 @@ plot_signif_taxa_num <- function(dat1, dat2, dat3, dat4) {
                                     lefse_R2_LDA))
     
     pl <- combined_outputs %>% 
-        count(app_name) %>% 
+        dplyr::count(app_name) %>% 
         ggplot(aes(app_name, n)) +
         geom_col() +
         geom_label(aes(label = n)) +
@@ -493,6 +493,7 @@ amplicon_joint_output <- purrr::reduce(
 amplicon_joint_output
 ```
 
+
 * Zeybel_ps_species_lefse
 ```{r}
 MGS_joint_output <- purrr::reduce(
@@ -519,6 +520,7 @@ amplicon_joint_output %>%
     ggtitle("Comparison of LDA scores of features reported as significant 
     by both lefse-conda and run_lefse")
 ```
+
 
 * run_lefse2 (microbiomeMarker R package) vs lefse-conda
 ```{r}
@@ -619,6 +621,8 @@ setdiff(amplicon_ps_genus_lefse_conda$TaxaID, amplicon_ps_genus_lefse_R$TaxaID)
 ```{r}
 setdiff(amplicon_ps_genus_lefse_conda$TaxaID, amplicon_ps_genus_lefse_R2$TaxaID)
 ```
+
+
 
 # Session info
 ```{r}
